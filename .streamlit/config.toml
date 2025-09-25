@@ -1,0 +1,18 @@
+[server]
+# Auto-reload quando o arquivo é salvo
+runOnSave = true
+
+# Configurações de desenvolvimento
+port = 8501
+enableCORS = false
+
+[browser]
+# Não coletar estatísticas de uso
+gatherUsageStats = false
+
+[theme]
+# Tema padrão mais limpo
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
