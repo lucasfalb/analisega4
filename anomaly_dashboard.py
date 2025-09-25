@@ -672,7 +672,7 @@ def check_password():
             help="Digite a senha para acessar o dashboard"
         )
         
-        if st.button("🚀 ENTRAR", type="primary", use_container_width=True):
+        if st.button("🚀 ENTRAR", type="primary", width="stretch"):
             if password:
                 st.session_state["password"] = password
                 password_entered()
@@ -897,7 +897,11 @@ def main():
             # Resumo das anomalias
             st.plotly_chart(
                 create_anomaly_summary_chart(anomalies),
-                use_container_width=True
+                config={
+                    "displayModeBar": True,
+                    "modeBarButtonsToRemove": ["pan2d", "lasso2d", "select2d"],
+                    "displaylogo": False
+                }
             )
             
             # Detalhes específicos - Valores Zero
@@ -908,7 +912,7 @@ def main():
                         'Date': lambda x: x.strftime('%d/%m/%Y'),
                         'Views': '{:,.0f}'
                     }),
-                    use_container_width=True
+                    width="stretch"
                 )
             
             # Valores Muito Baixos
@@ -919,7 +923,7 @@ def main():
                         'Date': lambda x: x.strftime('%d/%m/%Y'),
                         'Views': '{:,.0f}'
                     }),
-                    use_container_width=True
+                    width="stretch"
                 )
             
             # Outliers Estatísticos
@@ -933,7 +937,7 @@ def main():
                         'Views': '{:,.0f}',
                         'Variation_%': '{:+.1f}%'
                     }),
-                    use_container_width=True
+                    width="stretch"
                 )
             
             # Variações extremas
@@ -947,7 +951,7 @@ def main():
                         'Views': '{:,.0f}',
                         'Variation_%': '{:+.1f}%'
                     }),
-                    use_container_width=True
+                    width="stretch"
                 )
             
             # Horas faltando
@@ -961,14 +965,18 @@ def main():
                     missing_df[['date', 'missing_hours_str']].style.format({
                         'date': lambda x: x.strftime('%d/%m/%Y')
                     }),
-                    use_container_width=True
+                    width="stretch"
                 )
         
         with tab2:
             st.plotly_chart(
                 create_time_series_chart(df, anomalies, stats),
-                use_container_width=True,
-                key="time_series_chart"
+                key="time_series_chart",
+                config={
+                    "displayModeBar": True,
+                    "modeBarButtonsToRemove": ["pan2d", "lasso2d", "select2d"],
+                    "displaylogo": False
+                }
             )
         
         with tab3:
@@ -976,8 +984,12 @@ def main():
             st.subheader("📊 Análise Geral por Hora (Todo o Período)")
             st.plotly_chart(
                 create_hourly_analysis_chart(df),
-                use_container_width=True,
-                key="hourly_analysis_general"
+                key="hourly_analysis_general",
+                config={
+                    "displayModeBar": True,
+                    "modeBarButtonsToRemove": ["pan2d", "lasso2d", "select2d"],
+                    "displaylogo": False
+                }
             )
             
             st.markdown("---")
@@ -1044,8 +1056,12 @@ def main():
                     
                     st.plotly_chart(
                         create_comparison_chart(selected_datasets, all_stats, selected_brands_for_comparison, aggregation_mode),
-                        use_container_width=True,
-                        key="comparison_chart"
+                        key="comparison_chart",
+                        config={
+                            "displayModeBar": True,
+                            "modeBarButtonsToRemove": ["pan2d", "lasso2d", "select2d"],
+                            "displaylogo": False
+                        }
                     )
                 
                     # Métricas comparativas
@@ -1055,7 +1071,7 @@ def main():
                     # Mostrar apenas colunas formatadas na tabela
                     display_df = comparison_df[['Marca', 'Total Pageviews Formatado', 'Média por Hora Formatada', 'Mediana', 'Desvio Padrão', 'Máximo', 'Mínimo']]
                     display_df.columns = ['Marca', 'Total Pageviews', 'Média por Hora', 'Mediana', 'Desvio Padrão', 'Máximo', 'Mínimo']
-                    st.dataframe(display_df, use_container_width=True)
+                    st.dataframe(display_df, width="stretch")
                 
                     # Ranking de performance
                     st.subheader("🏆 Ranking de Performance")
@@ -1066,7 +1082,7 @@ def main():
                         st.markdown("**📈 Maior Volume Total**")
                         top_total = comparison_df.nlargest(1, 'Total Pageviews')[['Marca', 'Total Pageviews Formatado']]
                         top_total.columns = ['Marca', 'Total Pageviews']
-                        st.dataframe(top_total, use_container_width=True)
+                        st.dataframe(top_total, width="stretch")
                     
                     with col2:
                         st.markdown("**📊 Maior Média por Hora**")
@@ -1074,14 +1090,14 @@ def main():
                         top_avg_idx = comparison_df['Média por Hora'].idxmax()
                         top_avg = comparison_df.loc[[top_avg_idx], ['Marca', 'Média por Hora Formatada']]
                         top_avg.columns = ['Marca', 'Média por Hora']
-                        st.dataframe(top_avg, use_container_width=True)
+                        st.dataframe(top_avg, width="stretch")
                     
                     with col3:
                         st.markdown("**📊 Menor Desvio Padrão**")
                         # Usar a coluna numérica original para ordenação
                         top_stable_idx = comparison_df['Desvio Padrão'].astype(float).idxmin()
                         top_stable = comparison_df.loc[[top_stable_idx], ['Marca', 'Desvio Padrão']]
-                        st.dataframe(top_stable, use_container_width=True)
+                        st.dataframe(top_stable, width="stretch")
                 
                     # Análise de anomalias comparativa
                     st.subheader("🚨 Análise de Anomalias por Marca")
@@ -1130,8 +1146,12 @@ def main():
                     # Gráfico visual das anomalias
                     st.plotly_chart(
                         create_anomaly_analysis_chart(anomaly_comparison),
-                        use_container_width=True,
-                        key="anomaly_analysis_chart"
+                        key="anomaly_analysis_chart",
+                        config={
+                            "displayModeBar": True,
+                            "modeBarButtonsToRemove": ["pan2d", "lasso2d", "select2d"],
+                            "displaylogo": False
+                        }
                     )
                     
                  
