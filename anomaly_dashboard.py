@@ -1,18 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import io
 from datetime import datetime, timedelta
-import statistics
 from collections import defaultdict
-import base64
-import time
 import os
 import glob
-import hashlib
 
 # Configuração da página
 st.set_page_config(
@@ -682,6 +676,7 @@ def check_password():
             if password:
                 st.session_state["password"] = password
                 password_entered()
+                st.rerun()  # Força o rerun para aplicar a mudança
             else:
                 st.error("❌ Por favor, digite a senha!")
     
@@ -726,17 +721,11 @@ def main():
         st.sidebar.subheader("📅 Filtro de Período Geral")
         st.sidebar.caption("Filtra todos os dados para o período selecionado")
         
-        # Inicializar filtros globais no session_state se não existirem
-        if 'global_start_date' not in st.session_state:
-            st.session_state.global_start_date = df['Date'].min().date()
-        if 'global_end_date' not in st.session_state:
-            st.session_state.global_end_date = df['Date'].max().date()
-        
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date_global = st.date_input(
                 "Data Inicial",
-                value=st.session_state.global_start_date,
+                value=st.session_state.get('global_start_date', df['Date'].min().date()),
                 min_value=df['Date'].min().date(),
                 max_value=df['Date'].max().date(),
                 help="Data inicial para análise geral",
@@ -746,7 +735,7 @@ def main():
         with col2:
             end_date_global = st.date_input(
                 "Data Final",
-                value=st.session_state.global_end_date,
+                value=st.session_state.get('global_end_date', df['Date'].max().date()),
                 min_value=df['Date'].min().date(),
                 max_value=df['Date'].max().date(),
                 help="Data final para análise geral",
