@@ -609,6 +609,45 @@ def main():
         # Dataset selecionado
         df = datasets[selected_brand]
         
+        # Date picker geral para filtrar todos os dados
+        st.sidebar.subheader("📅 Filtro de Período Geral")
+        st.sidebar.caption("Filtra todos os dados para o período selecionado")
+        
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            start_date_global = st.date_input(
+                "Data Inicial",
+                value=df['Date'].min().date(),
+                min_value=df['Date'].min().date(),
+                max_value=df['Date'].max().date(),
+                help="Data inicial para análise geral",
+                key="global_start_date"
+            )
+        
+        with col2:
+            end_date_global = st.date_input(
+                "Data Final",
+                value=df['Date'].max().date(),
+                min_value=df['Date'].min().date(),
+                max_value=df['Date'].max().date(),
+                help="Data final para análise geral",
+                key="global_end_date"
+            )
+        
+        # Aplicar filtro de data global
+        start_datetime_global = pd.to_datetime(start_date_global)
+        end_datetime_global = pd.to_datetime(end_date_global) + pd.Timedelta(days=1)
+        
+        df_filtered_global = df[(df['Date'] >= start_datetime_global) & (df['Date'] < end_datetime_global)]
+        
+        # Mostrar informações do filtro
+        if len(df_filtered_global) != len(df):
+            st.sidebar.info(f"📊 **Filtrado:** {len(df_filtered_global):,} de {len(df):,} registros")
+            st.sidebar.caption(f"Período: {start_date_global} a {end_date_global}")
+        
+        # Usar dados filtrados para o resto da análise
+        df = df_filtered_global
+        
         # Configurações de detecção
         st.sidebar.subheader("🔍 Parâmetros de Detecção")
         
@@ -976,8 +1015,14 @@ def main():
                     )
                 
                 if selected_brands_for_comparison:
-                    # Calcular estatísticas apenas para marcas selecionadas
-                    selected_datasets = {brand: datasets[brand] for brand in selected_brands_for_comparison}
+                    # Aplicar filtro global também na comparação
+                    selected_datasets = {}
+                    for brand in selected_brands_for_comparison:
+                        brand_df = datasets[brand]
+                        # Aplicar o mesmo filtro de data global
+                        brand_df_filtered = brand_df[(brand_df['Date'] >= start_datetime_global) & (brand_df['Date'] < end_datetime_global)]
+                        selected_datasets[brand] = brand_df_filtered
+                    
                     all_stats = {}
                     for brand_name, brand_df in selected_datasets.items():
                         all_stats[brand_name] = calculate_statistics(brand_df)
