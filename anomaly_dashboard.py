@@ -129,14 +129,47 @@ def calculate_statistics(df):
     
     return stats
 
-def detect_anomalies(df, stats, low_threshold=50, extreme_threshold=0.8, start_hour=0, end_hour=23):
+def calculate_hourly_means(df):
+    """Calcula a média histórica para cada hora do dia"""
+    hourly_means = df.groupby('Hour')['Views'].mean().to_dict()
+    return hourly_means
+
+def detect_low_values_by_hour(df, hourly_means, threshold_percentage=0.5):
+    """
+    Detecta valores baixos comparando com a média histórica de cada hora
+    threshold_percentage: percentual da média histórica (ex: 0.5 = 50% da média)
+    """
+    low_values = []
+    
+    for _, row in df.iterrows():
+        hour = row['Hour']
+        current_value = row['Views']
+        historical_mean = hourly_means.get(hour, 0)
+        
+        # Se a média histórica for muito baixa (menos que 5), não considerar como anomalia
+        if historical_mean < 5:
+            continue
+            
+        # Se o valor atual for menor que X% da média histórica dessa hora
+        if current_value < (historical_mean * threshold_percentage):
+            low_values.append(row)
+    
+    return pd.DataFrame(low_values) if low_values else pd.DataFrame()
+
+def detect_anomalies(df, stats, threshold_percentage=0.5, extreme_threshold=0.8, start_hour=0, end_hour=23):
     """Detecta diferentes tipos de anomalias"""
     # Filtrar dados pelo range de horas
     df_filtered = df[(df['Hour'] >= start_hour) & (df['Hour'] <= end_hour)]
     
+    # Calcular médias históricas por hora
+    hourly_means = calculate_hourly_means(df)
+    
+    # Detectar valores baixos comparando com a média histórica de cada hora
+    very_low_views = detect_low_values_by_hour(df_filtered, hourly_means, threshold_percentage)
+    
     anomalies = {
         'zero_views': df_filtered[df_filtered['Views'] == 0],
-        'very_low_views': df_filtered[(df_filtered['Views'] > 0) & (df_filtered['Views'] < low_threshold)],
+        'very_low_views': very_low_views,
         'statistical_outliers': df_filtered[
             (df_filtered['Views'] < stats['lower_bound']) | 
             (df_filtered['Views'] > stats['upper_bound'])
@@ -551,9 +584,17 @@ def main():
         
         # Seleção de marca na sidebar
         st.sidebar.subheader("🎯 Análise Individual")
+        
+        # Definir BYD como padrão se disponível
+        available_brands = list(datasets.keys())
+        default_index = 0
+        if "Byd" in available_brands:
+            default_index = available_brands.index("Byd")
+        
         selected_brand = st.sidebar.selectbox(
             "Escolha uma marca para análise detalhada:",
-            options=list(datasets.keys()),
+            options=available_brands,
+            index=default_index,
             help="Selecione uma marca para análise individual nas abas específicas"
         )
         
@@ -596,14 +637,6 @@ def main():
             end_hour = start_hour
             st.sidebar.warning("⚠️ Hora final ajustada para ser maior que a inicial")
         
-        low_threshold = st.sidebar.slider(
-            "Limite para valores baixos",
-            min_value=10,
-            max_value=200,
-            value=50,
-            help="Valores abaixo deste limite serão considerados muito baixos"
-        )
-        
         extreme_threshold = st.sidebar.slider(
             "Limite para variações extremas (%)",
             min_value=50,
@@ -632,8 +665,21 @@ def main():
         # Calcular estatísticas
         stats = calculate_statistics(df)
         
+        # Calcular médias históricas por hora
+        hourly_means = calculate_hourly_means(df)
+        
+        st.sidebar.caption("Valores baixos são detectados comparando com a média histórica de cada hora específica")
+        
+        # Configurar threshold de percentual da média histórica
+        threshold_percentage = st.sidebar.slider(
+            "Limite para valores baixos (% da média histórica da hora)",
+            min_value=10,
+            max_value=80,
+            value=50,
+            help="Valores abaixo deste percentual da média histórica da hora serão considerados baixos"
+        ) / 100
         # Detectar anomalias
-        anomalies = detect_anomalies(df, stats, low_threshold, extreme_threshold, start_hour, end_hour)
+        anomalies = detect_anomalies(df, stats, threshold_percentage, extreme_threshold, start_hour, end_hour)
         
         # Métricas principais
         st.subheader("📈 Métricas Principais")
@@ -680,21 +726,94 @@ def main():
         
         # Tabs para diferentes visualizações
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "🚨 Anomalias", 
             "📊 Série Temporal", 
             "⏰ Análise por Hora", 
-            "🚨 Anomalias", 
             "📋 Relatório",
             "🔄 Comparação de Marcas"
         ])
         
         with tab1:
+            st.subheader("🚨 Detalhes das Anomalias")
+            
+            # Resumo das anomalias
+            st.plotly_chart(
+                create_anomaly_summary_chart(anomalies),
+                use_container_width=True
+            )
+            
+            # Detalhes específicos - Valores Zero
+            if not anomalies['zero_views'].empty:
+                st.subheader("❌ Valores Zero")
+                st.dataframe(
+                    anomalies['zero_views'][['Date', 'Hour', 'Views']].style.format({
+                        'Date': lambda x: x.strftime('%d/%m/%Y'),
+                        'Views': '{:,.0f}'
+                    }),
+                    use_container_width=True
+                )
+            
+            # Valores Muito Baixos
+            if not anomalies['very_low_views'].empty:
+                st.subheader("⚠️ Valores Muito Baixos")
+                st.dataframe(
+                    anomalies['very_low_views'][['Date', 'Hour', 'Views']].head(10).style.format({
+                        'Date': lambda x: x.strftime('%d/%m/%Y'),
+                        'Views': '{:,.0f}'
+                    }),
+                    use_container_width=True
+                )
+            
+            # Outliers Estatísticos
+            if not anomalies['statistical_outliers'].empty:
+                st.subheader("📈 Outliers Estatísticos (Top 10)")
+                outliers_display = anomalies['statistical_outliers'].copy()
+                outliers_display['Variation_%'] = ((outliers_display['Views'] - stats['mean']) / stats['mean'] * 100).round(1)
+                st.dataframe(
+                    outliers_display[['Date', 'Hour', 'Views', 'Variation_%']].head(10).style.format({
+                        'Date': lambda x: x.strftime('%d/%m/%Y'),
+                        'Views': '{:,.0f}',
+                        'Variation_%': '{:+.1f}%'
+                    }),
+                    use_container_width=True
+                )
+            
+            # Variações extremas
+            if not anomalies['extreme_variations'].empty:
+                st.subheader("📊 Variações Extremas")
+                extreme_display = anomalies['extreme_variations'].copy()
+                extreme_display['Variation_%'] = ((extreme_display['Views'] - stats['mean']) / stats['mean'] * 100).round(1)
+                st.dataframe(
+                    extreme_display[['Date', 'Hour', 'Views', 'Variation_%']].style.format({
+                        'Date': lambda x: x.strftime('%d/%m/%Y'),
+                        'Views': '{:,.0f}',
+                        'Variation_%': '{:+.1f}%'
+                    }),
+                    use_container_width=True
+                )
+            
+            # Horas faltando
+            if anomalies['missing_hours']:
+                st.subheader("⏰ Horas Faltando")
+                missing_df = pd.DataFrame(anomalies['missing_hours'])
+                missing_df['missing_hours_str'] = missing_df['missing_hours'].apply(
+                    lambda x: ', '.join([f"{h:02d}h" for h in x])
+                )
+                st.dataframe(
+                    missing_df[['date', 'missing_hours_str']].style.format({
+                        'date': lambda x: x.strftime('%d/%m/%Y')
+                    }),
+                    use_container_width=True
+                )
+        
+        with tab2:
             st.plotly_chart(
                 create_time_series_chart(df, anomalies, stats),
                 use_container_width=True,
                 key="time_series_chart"
             )
         
-        with tab2:
+        with tab3:
             # Gráfico geral por hora (sem filtro)
             st.subheader("📊 Análise Geral por Hora (Todo o Período)")
             st.plotly_chart(
@@ -707,6 +826,8 @@ def main():
             
             # Date picker para análise detalhada
             st.subheader("📅 Seleção de Período para Análise Detalhada")
+            
+            # Usar colunas apenas para os date pickers, mas não afetar o resto
             col1, col2 = st.columns(2)
             
             with col1:
@@ -727,163 +848,86 @@ def main():
                     help="Selecione a data final para análise detalhada"
                 )
                 
-                # Filtrar dados pelo período selecionado
-                start_datetime = pd.to_datetime(start_date)
-                end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+            # Filtrar dados pelo período selecionado
+            start_datetime = pd.to_datetime(start_date)
+            end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+            
+            df_filtered = df[(df['Date'] >= start_datetime) & (df['Date'] < end_datetime)]
+            
+            if len(df_filtered) == 0:
+                st.warning("⚠️ Nenhum dado encontrado para o período selecionado.")
+            else:
+                st.info(f"📊 Analisando {len(df_filtered)} registros de {start_date} a {end_date}")
                 
-                df_filtered = df[(df['Date'] >= start_datetime) & (df['Date'] < end_datetime)]
-                
-                if len(df_filtered) == 0:
-                    st.warning("⚠️ Nenhum dado encontrado para o período selecionado.")
-                else:
-                    st.info(f"📊 Analisando {len(df_filtered)} registros de {start_date} a {end_date}")
-                    
-                    # Gráfico para o período selecionado
-                    st.plotly_chart(
-                        create_hourly_analysis_chart(df_filtered),
-                        use_container_width=True,
-                        key="hourly_analysis_filtered"
-                    )
-                    
-                    # Análise detalhada por hora para o período selecionado
-                    st.subheader("📊 Análise Detalhada por Hora (Período Selecionado)")
-                
-                    # Criar DataFrame com todas as horas do dia (0-23)
-                    all_hours = pd.DataFrame({'Hour': range(24)})
-                    
-                    # Calcular estatísticas para horas com dados (período filtrado)
-                    hourly_stats = df_filtered.groupby('Hour')['Views'].agg([
-                        'count', 'mean', 'std', 'min', 'max', 
-                        ('q25', lambda x: x.quantile(0.25)),
-                        ('q75', lambda x: x.quantile(0.75))
-                    ]).round(1)
-                    
-                    # Fazer merge com todas as horas
-                    hourly_detailed = all_hours.merge(hourly_stats, on='Hour', how='left')
-                    
-                    # Preencher valores NaN com 0 ou 'N/A'
-                    hourly_detailed['count'] = hourly_detailed['count'].fillna(0).astype(int)
-                    hourly_detailed['mean'] = hourly_detailed['mean'].fillna(0)
-                    hourly_detailed['std'] = hourly_detailed['std'].fillna(0)
-                    hourly_detailed['min'] = hourly_detailed['min'].fillna(0)
-                    hourly_detailed['max'] = hourly_detailed['max'].fillna(0)
-                    hourly_detailed['q25'] = hourly_detailed['q25'].fillna(0)
-                    hourly_detailed['q75'] = hourly_detailed['q75'].fillna(0)
-                    
-                    # Calcular CV e amplitude
-                    hourly_detailed['cv'] = np.where(
-                        hourly_detailed['mean'] > 0, 
-                        (hourly_detailed['std'] / hourly_detailed['mean'] * 100).round(1),
-                        0
-                    )
-                    hourly_detailed['range'] = hourly_detailed['max'] - hourly_detailed['min']
-                    
-                    # Renomear colunas para melhor visualização
-                    hourly_detailed.columns = ['Hora', 'Registros', 'Média', 'Desvio Padrão', 'Mínimo', 'Máximo', 'Q1', 'Q3', 'CV (%)', 'Amplitude']
-                    
-                    st.dataframe(hourly_detailed, use_container_width=True)
-                
-                    # Identificar horas com maior variabilidade
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.subheader("⚠️ Horas com Maior Variabilidade")
-                        # Filtrar apenas horas com dados (registros > 0)
-                        hours_with_data = hourly_detailed[hourly_detailed['Registros'] > 0]
-                        high_variability = hours_with_data[hours_with_data['CV (%)'] > 30].sort_values('CV (%)', ascending=False)
-                        if not high_variability.empty:
-                            st.dataframe(high_variability[['Hora', 'Média', 'CV (%)', 'Amplitude']], use_container_width=True)
-                        else:
-                            st.success("✅ Nenhuma hora com variabilidade excessiva (CV > 30%)")
-                    
-                    with col2:
-                        st.subheader("📈 Horas com Maior Tráfego")
-                        # Filtrar apenas horas com dados
-                        hours_with_data = hourly_detailed[hourly_detailed['Registros'] > 0]
-                        top_hours = hours_with_data.nlargest(3, 'Média')[['Hora', 'Média', 'Máximo', 'CV (%)']]
-                        st.dataframe(top_hours, use_container_width=True)
-                    
-                    # Mostrar horas sem dados
-                    hours_without_data = hourly_detailed[hourly_detailed['Registros'] == 0]
-                    if not hours_without_data.empty:
-                        st.subheader("❌ Horas Sem Dados")
-                        st.warning(f"⚠️ {len(hours_without_data)} horas não possuem dados: {', '.join([f'{h}h' for h in hours_without_data['Hora']])}")
-                        st.dataframe(hours_without_data[['Hora']], use_container_width=True)
-                    
-            with tab3:
-                st.subheader("🚨 Detalhes das Anomalias")
-                
-                # Resumo das anomalias
+                # Gráfico para o período selecionado
                 st.plotly_chart(
-                    create_anomaly_summary_chart(anomalies),
-                    use_container_width=True
+                    create_hourly_analysis_chart(df_filtered),
+                    use_container_width=True,
+                    key="hourly_analysis_filtered"
                 )
                 
-                # Detalhes específicos
-                col1, col2 = st.columns(2)
+                # Análise detalhada por hora para o período selecionado
+                st.subheader("📊 Análise Detalhada por Hora (Período Selecionado)")
+            
+                # Criar DataFrame com todas as horas do dia (0-23)
+                all_hours = pd.DataFrame({'Hour': range(24)})
                 
-                with col1:
-                    if not anomalies['zero_views'].empty:
-                        st.subheader("❌ Valores Zero")
-                        st.dataframe(
-                            anomalies['zero_views'][['Date', 'Hour', 'Views']].style.format({
-                                'Date': lambda x: x.strftime('%d/%m/%Y'),
-                                'Views': '{:,.0f}'
-                            }),
-                            use_container_width=True
-                        )
+                # Calcular estatísticas para horas com dados (período filtrado)
+                hourly_stats = df_filtered.groupby('Hour')['Views'].agg([
+                    'count', 'mean', 'std', 'min', 'max', 
+                    ('q25', lambda x: x.quantile(0.25)),
+                    ('q75', lambda x: x.quantile(0.75))
+                ]).round(1)
+                
+                # Fazer merge com todas as horas
+                hourly_detailed = all_hours.merge(hourly_stats, on='Hour', how='left')
+                
+                # Preencher valores NaN com 0 ou 'N/A'
+                hourly_detailed['count'] = hourly_detailed['count'].fillna(0).astype(int)
+                hourly_detailed['mean'] = hourly_detailed['mean'].fillna(0)
+                hourly_detailed['std'] = hourly_detailed['std'].fillna(0)
+                hourly_detailed['min'] = hourly_detailed['min'].fillna(0)
+                hourly_detailed['max'] = hourly_detailed['max'].fillna(0)
+                hourly_detailed['q25'] = hourly_detailed['q25'].fillna(0)
+                hourly_detailed['q75'] = hourly_detailed['q75'].fillna(0)
+                
+                # Calcular CV e amplitude
+                hourly_detailed['cv'] = np.where(
+                    hourly_detailed['mean'] > 0, 
+                    (hourly_detailed['std'] / hourly_detailed['mean'] * 100).round(1),
+                    0
+                )
+                hourly_detailed['range'] = hourly_detailed['max'] - hourly_detailed['min']
+                
+                # Renomear colunas para melhor visualização
+                hourly_detailed.columns = ['Hora', 'Registros', 'Média', 'Desvio Padrão', 'Mínimo', 'Máximo', 'Q1', 'Q3', 'CV (%)', 'Amplitude']
+                
+                st.dataframe(hourly_detailed, use_container_width=True)
+            
+                # Identificar horas com maior variabilidade
+                st.subheader("⚠️ Horas com Maior Variabilidade")
+                # Filtrar apenas horas com dados (registros > 0)
+                hours_with_data = hourly_detailed[hourly_detailed['Registros'] > 0]
+                high_variability = hours_with_data[hours_with_data['CV (%)'] > 30].sort_values('CV (%)', ascending=False)
+                if not high_variability.empty:
+                    st.dataframe(high_variability[['Hora', 'Média', 'CV (%)', 'Amplitude']], use_container_width=True)
+                else:
+                    st.success("✅ Nenhuma hora com variabilidade excessiva (CV > 30%)")
+                
+                # Horas com maior tráfego
+                st.subheader("📈 Horas com Maior Tráfego")
+                # Filtrar apenas horas com dados
+                hours_with_data = hourly_detailed[hourly_detailed['Registros'] > 0]
+                top_hours = hours_with_data.nlargest(3, 'Média')[['Hora', 'Média', 'Máximo', 'CV (%)']]
+                st.dataframe(top_hours, use_container_width=True)
+                
+                # Mostrar horas sem dados
+                hours_without_data = hourly_detailed[hourly_detailed['Registros'] == 0]
+                if not hours_without_data.empty:
+                    st.subheader("❌ Horas Sem Dados")
+                    st.warning(f"⚠️ {len(hours_without_data)} horas não possuem dados: {', '.join([f'{h}h' for h in hours_without_data['Hora']])}")
+                    st.dataframe(hours_without_data[['Hora']], use_container_width=True)
                     
-                    if not anomalies['very_low_views'].empty:
-                        st.subheader("⚠️ Valores Muito Baixos")
-                        st.dataframe(
-                            anomalies['very_low_views'][['Date', 'Hour', 'Views']].head(10).style.format({
-                                'Date': lambda x: x.strftime('%d/%m/%Y'),
-                                'Views': '{:,.0f}'
-                            }),
-                            use_container_width=True
-                        )
-                
-                with col2:
-                    if not anomalies['statistical_outliers'].empty:
-                        st.subheader("📈 Outliers Estatísticos (Top 10)")
-                        outliers_display = anomalies['statistical_outliers'].copy()
-                        outliers_display['Variation_%'] = ((outliers_display['Views'] - stats['mean']) / stats['mean'] * 100).round(1)
-                        st.dataframe(
-                            outliers_display[['Date', 'Hour', 'Views', 'Variation_%']].head(10).style.format({
-                                'Date': lambda x: x.strftime('%d/%m/%Y'),
-                                'Views': '{:,.0f}',
-                                'Variation_%': '{:+.1f}%'
-                            }),
-                            use_container_width=True
-                        )
-                
-                # Variações extremas
-                if not anomalies['extreme_variations'].empty:
-                    st.subheader("📊 Variações Extremas")
-                    extreme_display = anomalies['extreme_variations'].copy()
-                    extreme_display['Variation_%'] = ((extreme_display['Views'] - stats['mean']) / stats['mean'] * 100).round(1)
-                    st.dataframe(
-                        extreme_display[['Date', 'Hour', 'Views', 'Variation_%']].style.format({
-                            'Date': lambda x: x.strftime('%d/%m/%Y'),
-                            'Views': '{:,.0f}',
-                            'Variation_%': '{:+.1f}%'
-                        }),
-                        use_container_width=True
-                    )
-                
-                # Horas faltando
-                if anomalies['missing_hours']:
-                    st.subheader("⏰ Horas Faltando")
-                    missing_df = pd.DataFrame(anomalies['missing_hours'])
-                    missing_df['missing_hours_str'] = missing_df['missing_hours'].apply(
-                        lambda x: ', '.join([f"{h:02d}h" for h in x])
-                    )
-                    st.dataframe(
-                        missing_df[['date', 'missing_hours_str']].style.format({
-                            'date': lambda x: x.strftime('%d/%m/%Y')
-                        }),
-                        use_container_width=True
-                    )
             
             with tab4:
                 st.subheader("📋 Relatório Completo")
@@ -984,7 +1028,8 @@ def main():
                     anomaly_comparison = []
                     for brand_name, brand_df in selected_datasets.items():
                         brand_stats = all_stats[brand_name]
-                        brand_anomalies = detect_anomalies(brand_df, brand_stats, low_threshold, extreme_threshold, start_hour, end_hour)
+                        # Usar threshold de 50% da média histórica para comparação
+                        brand_anomalies = detect_anomalies(brand_df, brand_stats, 0.5, extreme_threshold, start_hour, end_hour)
                         
                         total_anomalies = (len(brand_anomalies['zero_views']) + 
                                          len(brand_anomalies['very_low_views']) + 

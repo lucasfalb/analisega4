@@ -12,7 +12,7 @@ Um dashboard interativo em Python para detectar e analisar anomalias em dados de
   - Horas faltando nos dados
 - **Visualizações Interativas**: Gráficos dinâmicos com Plotly
 - **Relatórios Exportáveis**: Gere relatórios em texto para download
-- **Configuração Flexível**: Ajuste parâmetros de detecção conforme necessário
+- **Configuração Flexível* *: Ajuste parâmetros de detecção conforme necessário
 
 ## 📋 Requisitos
 
