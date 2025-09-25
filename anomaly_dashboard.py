@@ -106,6 +106,23 @@ def calculate_statistics(df):
     """Calcula estatísticas básicas dos dados"""
     views = df['Views'].values
     
+    # Verificar se há dados
+    if len(views) == 0:
+        return {
+            'total': 0,
+            'count': 0,
+            'mean': 0.0,
+            'median': 0.0,
+            'std': 0.0,
+            'min': 0,
+            'max': 0,
+            'q1': 0.0,
+            'q3': 0.0,
+            'iqr': 0.0,
+            'lower_bound': 0.0,
+            'upper_bound': 0.0
+        }
+    
     stats = {
         'total': int(np.sum(views)),
         'count': len(views),
@@ -158,6 +175,16 @@ def detect_low_values_by_hour(df, hourly_means, threshold_percentage=0.5):
 
 def detect_anomalies(df, stats, threshold_percentage=0.5, extreme_threshold=0.8, start_hour=0, end_hour=23):
     """Detecta diferentes tipos de anomalias"""
+    # Verificar se há dados
+    if len(df) == 0:
+        return {
+            'zero_views': pd.DataFrame(),
+            'very_low_views': pd.DataFrame(),
+            'statistical_outliers': pd.DataFrame(),
+            'extreme_variations': pd.DataFrame(),
+            'missing_hours': []
+        }
+    
     # Filtrar dados pelo range de horas
     df_filtered = df[(df['Hour'] >= start_hour) & (df['Hour'] <= end_hour)]
     
@@ -175,7 +202,8 @@ def detect_anomalies(df, stats, threshold_percentage=0.5, extreme_threshold=0.8,
             (df_filtered['Views'] > stats['upper_bound'])
         ],
         'extreme_variations': df_filtered[
-            abs(df_filtered['Views'] - stats['mean']) / stats['mean'] > extreme_threshold
+            (abs(df_filtered['Views'] - stats['mean']) / stats['mean'] > extreme_threshold) &
+            ((df_filtered['Views'] > stats['mean'] * 2) | (df_filtered['Views'] < stats['mean'] * 0.3))
         ]
     }
     
@@ -360,12 +388,22 @@ def generate_report_text(df, stats, anomalies):
     hours_with_data = set(df['Hour'].unique())
     missing_hours = all_hours - hours_with_data
     
+    # Calcular cobertura real considerando dias com horas faltando
+    total_expected_hours = len(df['Date'].unique()) * 24
+    total_actual_hours = len(df)
+    coverage_percentage = (total_actual_hours / total_expected_hours) * 100 if total_expected_hours > 0 else 100
+    
     report_lines.append("COBERTURA POR HORA:")
-    report_lines.append(f"• Horas com dados: {len(hours_with_data)}/24 ({len(hours_with_data)/24*100:.1f}%)")
+    report_lines.append(f"• Horas com dados: {total_actual_hours:,}/{total_expected_hours:,} ({coverage_percentage:.1f}%)")
     if missing_hours:
         report_lines.append(f"• Horas sem dados: {sorted(missing_hours)}")
     else:
         report_lines.append("• Todas as 24 horas possuem dados")
+    
+    # Informação adicional sobre dias com problemas
+    if anomalies['missing_hours']:
+        total_missing_hours = sum(len(day['missing_hours']) for day in anomalies['missing_hours'])
+        report_lines.append(f"• Total de horas faltando: {total_missing_hours}")
     
     return "\n".join(report_lines)
 
@@ -443,8 +481,15 @@ def load_csv_files_from_directory():
     
     return datasets
 
-def create_comparison_chart(datasets, stats_dict, selected_brands=None):
-    """Cria gráfico de comparação entre marcas selecionadas"""
+def create_comparison_chart(datasets, stats_dict, selected_brands=None, aggregation='hourly'):
+    """Cria gráfico de comparação entre marcas selecionadas
+    
+    Args:
+        datasets: Dicionário com datasets das marcas
+        stats_dict: Dicionário com estatísticas das marcas
+        selected_brands: Lista de marcas selecionadas
+        aggregation: 'hourly' para dados por hora, 'daily' para dados por dia
+    """
     fig = go.Figure()
     
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
@@ -458,22 +503,40 @@ def create_comparison_chart(datasets, stats_dict, selected_brands=None):
             df = datasets[brand_name]
             color = colors[i % len(colors)]
             
-            # Agrupar por data para ter um valor por dia
-            daily_views = df.groupby('Date')['Views'].sum().reset_index()
-            
-            fig.add_trace(go.Scatter(
-                x=daily_views['Date'],
-                y=daily_views['Views'],
-                mode='lines+markers',
-                name=brand_name,
-                line=dict(color=color, width=2),
-                marker=dict(size=4),
-                hovertemplate=f'<b>{brand_name}</b><br>%{{x}}<br>Views: %{{y:,}}<extra></extra>'
-            ))
+            if aggregation == 'hourly':
+                # Usar dados por hora (DateTime)
+                fig.add_trace(go.Scatter(
+                    x=df['DateTime'],
+                    y=df['Views'],
+                    mode='lines+markers',
+                    name=brand_name,
+                    line=dict(color=color, width=1.5),
+                    marker=dict(size=3),
+                    hovertemplate=f'<b>{brand_name}</b><br>' +
+                                  'Data: %{x|%d/%m/%Y}<br>' +
+                                  'Hora: %{x|%H}h<br>' +
+                                  'Views: %{y:,}<extra></extra>'
+                ))
+            else:
+                # Agrupar por data para ter um valor por dia
+                daily_views = df.groupby('Date')['Views'].sum().reset_index()
+                
+                fig.add_trace(go.Scatter(
+                    x=daily_views['Date'],
+                    y=daily_views['Views'],
+                    mode='lines+markers',
+                    name=brand_name,
+                    line=dict(color=color, width=2),
+                    marker=dict(size=4),
+                    hovertemplate=f'<b>{brand_name}</b><br>' +
+                                  'Data: %{x|%d/%m/%Y}<br>' +
+                                  'Views: %{y:,}<extra></extra>'
+                ))
     
+    title_suffix = "por Hora" if aggregation == 'hourly' else "por Dia"
     fig.update_layout(
-        title='Comparação de Pageviews entre Marcas Selecionadas',
-        xaxis_title='Data',
+        title=f'Comparação de Pageviews entre Marcas Selecionadas - {title_suffix}',
+        xaxis_title='Data e Hora' if aggregation == 'hourly' else 'Data',
         yaxis_title='Pageviews',
         height=500,
         hovermode='x unified',
@@ -501,23 +564,97 @@ def create_comparison_metrics(datasets, stats_dict):
             'Média por Hora Formatada': f"{stats['mean']:.1f}",
             'Mediana': f"{stats['median']:.1f}",
             'Desvio Padrão': f"{stats['std']:.1f}",
-            'CV (%)': stats['std']/stats['mean']*100,
-            'CV (%) Formatado': f"{stats['std']/stats['mean']*100:.1f}%",
             'Máximo': f"{stats['max']:,}",
             'Mínimo': f"{stats['min']:,}"
         })
     
     return pd.DataFrame(comparison_data)
 
+def create_anomaly_analysis_chart(anomaly_comparison_data):
+    """Cria gráfico visual para análise de anomalias por marca"""
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=('Total de Anomalias', 'Anomalias Críticas', 'Outliers Estatísticos', 'Horas Faltando'),
+        specs=[[{"type": "bar"}, {"type": "bar"}],
+               [{"type": "bar"}, {"type": "bar"}]]
+    )
+    
+    brands = [item['Marca'] for item in anomaly_comparison_data]
+    
+    # Total de anomalias
+    total_anomalies = [item['Total Anomalias'] for item in anomaly_comparison_data]
+    fig.add_trace(go.Bar(x=brands, y=total_anomalies, name='Total', marker_color='lightcoral'), row=1, col=1)
+    
+    # Anomalias críticas (zero + baixos)
+    critical_anomalies = [item['Valores Zero'] + item['Valores Baixos'] for item in anomaly_comparison_data]
+    fig.add_trace(go.Bar(x=brands, y=critical_anomalies, name='Críticas', marker_color='red'), row=1, col=2)
+    
+    # Outliers estatísticos
+    outliers = [item['Outliers'] for item in anomaly_comparison_data]
+    fig.add_trace(go.Bar(x=brands, y=outliers, name='Outliers', marker_color='orange'), row=2, col=1)
+    
+    # Horas faltando
+    missing_hours = [item['Horas Faltando'] for item in anomaly_comparison_data]
+    fig.add_trace(go.Bar(x=brands, y=missing_hours, name='Horas Faltando', marker_color='gray'), row=2, col=2)
+    
+    fig.update_layout(height=600, showlegend=False, title_text="Análise Visual de Anomalias por Marca")
+    return fig
+
+def calculate_anomaly_severity_score(anomaly_data):
+    """Calcula um score de severidade das anomalias (0-100)"""
+    # Pesos para diferentes tipos de anomalias
+    weights = {
+        'zero_views': 10,      # Muito crítico
+        'very_low_views': 5,   # Crítico
+        'statistical_outliers': 2,  # Moderado
+        'extreme_variations': 3,    # Moderado-alto
+        'missing_hours': 1     # Baixo
+    }
+    
+    total_records = anomaly_data.get('total_records', 1)
+    
+    # Calcular score ponderado
+    score = (
+        len(anomaly_data['zero_views']) * weights['zero_views'] +
+        len(anomaly_data['very_low_views']) * weights['very_low_views'] +
+        len(anomaly_data['statistical_outliers']) * weights['statistical_outliers'] +
+        len(anomaly_data['extreme_variations']) * weights['extreme_variations'] +
+        len(anomaly_data['missing_hours']) * weights['missing_hours']
+    )
+    
+    # Se não há anomalias, retornar 0
+    if score == 0:
+        return 0
+    
+    # Normalizar por total de registros (usar uma base mais conservadora)
+    # Assumir que 1% de anomalias críticas = score 50
+    normalized_score = min(100, (score / total_records) * 5000)
+    
+    return normalized_score
+
+def get_anomaly_status(score):
+    """Retorna o status baseado no score de severidade"""
+    if score >= 50:
+        return "🔴 Crítico"
+    elif score >= 25:
+        return "🟡 Atenção"
+    elif score >= 10:
+        return "🟠 Moderado"
+    elif score > 0:
+        return "🟢 Baixo"
+    else:
+        return "✅ Saudável"
+
 def check_password():
     """Verifica se a senha está correta"""
     def password_entered():
         """Verifica se a senha inserida está correta"""
-        if st.session_state["password"] == st.secrets.get("password", "admin123"):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Remove a senha da sessão por segurança
-        else:
-            st.session_state["password_correct"] = False
+        if "password" in st.session_state:
+            if st.session_state["password"] == st.secrets.get("password", "admin123"):
+                st.session_state["password_correct"] = True
+                del st.session_state["password"]  # Remove a senha da sessão por segurança
+            else:
+                st.session_state["password_correct"] = False
 
     # Retorna True se a senha estiver correta
     if st.session_state.get("password_correct", False):
@@ -531,20 +668,22 @@ def check_password():
     </div>
     """, unsafe_allow_html=True)
     
-    # Campo de senha
-    password_input = st.text_input(
-        "Senha", 
-        type="password", 
-        key="password",
-        help="Digite a senha para acessar o dashboard de análise de anomalias",
-        placeholder="Digite sua senha aqui..."
-    )
-    
-    # Botão ENTRAR
+    # Input da senha
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        password = st.text_input(
+            "Senha:",
+            type="password",
+            key="password_input",
+            help="Digite a senha para acessar o dashboard"
+        )
+        
         if st.button("🚀 ENTRAR", type="primary", use_container_width=True):
-            password_entered()
+            if password:
+                st.session_state["password"] = password
+                password_entered()
+            else:
+                st.error("❌ Por favor, digite a senha!")
     
     if "password_correct" in st.session_state:
         if not st.session_state["password_correct"]:
@@ -556,34 +695,11 @@ def main():
     # Cabeçalho principal
     st.markdown('<h1 class="main-header">📊 Análise de Anomalias - Pageviews</h1>', unsafe_allow_html=True)
     
-  
-    # Sidebar para configurações
-    st.sidebar.header("⚙️ Configurações")
-    
-    # Upload de arquivos
-    st.sidebar.markdown("### 📁 Upload de Dados")
-    
-    uploaded_files = st.sidebar.file_uploader(
-        "Selecione os arquivos CSV",
-        type=['csv'],
-        accept_multiple_files=True,
-        help="📋 **Formato esperado:**\n• Date, Hour, Views\n• Date + hour (YYYYMMDDHH), Views\n\n💡 **Dica:** Faça upload de múltiplos arquivos para comparar marcas"
-    )
     # Carregar CSVs automaticamente da pasta (com cache)
     datasets = load_csv_files_from_directory()
-    
-    # Se há arquivos enviados, também carregar eles (com cache)
-    if uploaded_files:
-        uploaded_datasets = load_multiple_datasets(uploaded_files)
-        datasets.update(uploaded_datasets)  # Combinar com CSVs da pasta
-    
+
     if datasets:
-        # Informações sobre marcas carregadas
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("📊 Marcas Carregadas")
-        
-        # Seleção de marca na sidebar
-        st.sidebar.subheader("🎯 Análise Individual")
+        st.sidebar.subheader("Marcas Carregadas")
         
         # Definir BYD como padrão se disponível
         available_brands = list(datasets.keys())
@@ -592,19 +708,16 @@ def main():
             default_index = available_brands.index("Byd")
         
         selected_brand = st.sidebar.selectbox(
-            "Escolha uma marca para análise detalhada:",
+            "Selecione a marca para análise:",
             options=available_brands,
             index=default_index,
-            help="Selecione uma marca para análise individual nas abas específicas"
         )
-        
         # Informações da marca selecionada
         selected_df = datasets[selected_brand]
         selected_stats = calculate_statistics(selected_df)
         
         st.sidebar.metric("Total Views", f"{selected_stats['total']:,}")
         st.sidebar.metric("Média/Hora", f"{selected_stats['mean']:.0f}")
-        st.sidebar.metric("CV (%)", f"{selected_stats['std']/selected_stats['mean']*100:.1f}%")
         
         # Dataset selecionado
         df = datasets[selected_brand]
@@ -613,11 +726,17 @@ def main():
         st.sidebar.subheader("📅 Filtro de Período Geral")
         st.sidebar.caption("Filtra todos os dados para o período selecionado")
         
+        # Inicializar filtros globais no session_state se não existirem
+        if 'global_start_date' not in st.session_state:
+            st.session_state.global_start_date = df['Date'].min().date()
+        if 'global_end_date' not in st.session_state:
+            st.session_state.global_end_date = df['Date'].max().date()
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date_global = st.date_input(
                 "Data Inicial",
-                value=df['Date'].min().date(),
+                value=st.session_state.global_start_date,
                 min_value=df['Date'].min().date(),
                 max_value=df['Date'].max().date(),
                 help="Data inicial para análise geral",
@@ -627,26 +746,31 @@ def main():
         with col2:
             end_date_global = st.date_input(
                 "Data Final",
-                value=df['Date'].max().date(),
+                value=st.session_state.global_end_date,
                 min_value=df['Date'].min().date(),
                 max_value=df['Date'].max().date(),
                 help="Data final para análise geral",
                 key="global_end_date"
             )
         
-        # Aplicar filtro de data global
-        start_datetime_global = pd.to_datetime(start_date_global)
-        end_datetime_global = pd.to_datetime(end_date_global) + pd.Timedelta(days=1)
-        
-        df_filtered_global = df[(df['Date'] >= start_datetime_global) & (df['Date'] < end_datetime_global)]
-        
-        # Mostrar informações do filtro
-        if len(df_filtered_global) != len(df):
-            st.sidebar.info(f"📊 **Filtrado:** {len(df_filtered_global):,} de {len(df):,} registros")
-            st.sidebar.caption(f"Período: {start_date_global} a {end_date_global}")
-        
-        # Usar dados filtrados para o resto da análise
-        df = df_filtered_global
+        # Validar se a data final é maior que a inicial
+        if end_date_global < start_date_global:
+            st.sidebar.error("⚠️ **Erro:** Data final deve ser maior que a data inicial!")
+            st.sidebar.caption("Ajuste as datas para continuar a análise")
+            # Usar dados originais se as datas estiverem incorretas
+            df = df
+        else:
+            # Aplicar filtro de data global
+            start_datetime_global = pd.to_datetime(start_date_global)
+            end_datetime_global = pd.to_datetime(end_date_global) + pd.Timedelta(days=1)
+            
+            df_filtered_global = df[(df['Date'] >= start_datetime_global) & (df['Date'] < end_datetime_global)]
+            
+            # Verificar se há dados após o filtro
+            if len(df_filtered_global) == 0:
+                st.sidebar.warning("⚠️ **Atenção:** Nenhum dado encontrado para o período selecionado!")
+                st.sidebar.caption("Usando todos os dados disponíveis")
+                df = df
         
         # Configurações de detecção
         st.sidebar.subheader("🔍 Parâmetros de Detecção")
@@ -684,22 +808,6 @@ def main():
             help="Variações acima deste percentual da média serão consideradas extremas"
         ) / 100
         
-        # Resumo das marcas
-        with st.sidebar.expander("📋 Detalhes das marcas", expanded=False):
-            for brand_name, brand_df in datasets.items():
-                total_views = brand_df['Views'].sum()
-                date_range = f"{brand_df['Date'].min().strftime('%d/%m/%Y')} a {brand_df['Date'].max().strftime('%d/%m/%Y')}"
-                total_records = len(brand_df)
-                avg_views = brand_df['Views'].mean()
-                
-                st.markdown(f"""
-                **🏢 {brand_name}**
-                - 📈 **{total_views:,}** views totais
-                - 📅 **{date_range}**
-                - 📊 **{total_records:,}** registros
-                - 📉 **{avg_views:.0f}** views/hora (média)
-                """)
-                st.markdown("---")
         
         # Calcular estatísticas
         stats = calculate_statistics(df)
@@ -717,6 +825,24 @@ def main():
             value=50,
             help="Valores abaixo deste percentual da média histórica da hora serão considerados baixos"
         ) / 100
+        # Resumo das marcas
+        with st.sidebar.expander("📋 Detalhes das marcas", expanded=False):
+            for brand_name, brand_df in datasets.items():
+                total_views = brand_df['Views'].sum()
+                date_range = f"{brand_df['Date'].min().strftime('%d/%m/%Y')} a {brand_df['Date'].max().strftime('%d/%m/%Y')}"
+                total_records = len(brand_df)
+                avg_views = brand_df['Views'].mean()
+                
+                st.markdown(f"""
+                **🏢 {brand_name}**
+                - 📈 **{total_views:,}** views totais
+                - 📅 **{date_range}**
+                - 📊 **{total_records:,}** registros
+                - 📉 **{avg_views:.0f}** views/hora (média)
+                """)
+                st.markdown("---")
+        
+    
         # Detectar anomalias
         anomalies = detect_anomalies(df, stats, threshold_percentage, extreme_threshold, start_hour, end_hour)
         
@@ -740,7 +866,11 @@ def main():
             )
         
         with col3:
-            total_anomalies = len(anomalies['zero_views']) + len(anomalies['very_low_views']) + len(anomalies['statistical_outliers'])
+            total_anomalies = (len(anomalies['zero_views']) + 
+                             len(anomalies['very_low_views']) + 
+                             len(anomalies['statistical_outliers']) + 
+                             len(anomalies['extreme_variations']) + 
+                             len(anomalies['missing_hours']))
             st.metric(
                 label="Total de Anomalias",
                 value=total_anomalies,
@@ -863,142 +993,24 @@ def main():
             
             st.markdown("---")
             
-            # Date picker para análise detalhada
-            st.subheader("📅 Seleção de Período para Análise Detalhada")
+            # Informação sobre o filtro global aplicado
+            st.info(f"📊 **Análise por Hora** - Período: {start_date_global} a {end_date_global}")
+            st.caption("Use o filtro de período geral na sidebar para ajustar o período de análise")
+        
+        with tab4:
+            st.subheader("📋 Relatório Completo")
             
-            # Usar colunas apenas para os date pickers, mas não afetar o resto
-            col1, col2 = st.columns(2)
+            # Gerar relatório
+            report_text = generate_report_text(df, stats, anomalies)
+            st.text_area("-", report_text, height=400)
             
-            with col1:
-                start_date = st.date_input(
-                    "Data Inicial",
-                    value=df['Date'].min().date(),
-                    min_value=df['Date'].min().date(),
-                    max_value=df['Date'].max().date(),
-                    help="Selecione a data inicial para análise detalhada"
-                )
-            
-            with col2:
-                end_date = st.date_input(
-                    "Data Final",
-                    value=df['Date'].max().date(),
-                    min_value=df['Date'].min().date(),
-                    max_value=df['Date'].max().date(),
-                    help="Selecione a data final para análise detalhada"
-                )
-                
-            # Filtrar dados pelo período selecionado
-            start_datetime = pd.to_datetime(start_date)
-            end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1)
-            
-            df_filtered = df[(df['Date'] >= start_datetime) & (df['Date'] < end_datetime)]
-            
-            if len(df_filtered) == 0:
-                st.warning("⚠️ Nenhum dado encontrado para o período selecionado.")
-            else:
-                st.info(f"📊 Analisando {len(df_filtered)} registros de {start_date} a {end_date}")
-                
-                # Gráfico para o período selecionado
-                st.plotly_chart(
-                    create_hourly_analysis_chart(df_filtered),
-                    use_container_width=True,
-                    key="hourly_analysis_filtered"
-                )
-                
-                # Análise detalhada por hora para o período selecionado
-                st.subheader("📊 Análise Detalhada por Hora (Período Selecionado)")
-            
-                # Criar DataFrame com todas as horas do dia (0-23)
-                all_hours = pd.DataFrame({'Hour': range(24)})
-                
-                # Calcular estatísticas para horas com dados (período filtrado)
-                hourly_stats = df_filtered.groupby('Hour')['Views'].agg([
-                    'count', 'mean', 'std', 'min', 'max', 
-                    ('q25', lambda x: x.quantile(0.25)),
-                    ('q75', lambda x: x.quantile(0.75))
-                ]).round(1)
-                
-                # Fazer merge com todas as horas
-                hourly_detailed = all_hours.merge(hourly_stats, on='Hour', how='left')
-                
-                # Preencher valores NaN com 0 ou 'N/A'
-                hourly_detailed['count'] = hourly_detailed['count'].fillna(0).astype(int)
-                hourly_detailed['mean'] = hourly_detailed['mean'].fillna(0)
-                hourly_detailed['std'] = hourly_detailed['std'].fillna(0)
-                hourly_detailed['min'] = hourly_detailed['min'].fillna(0)
-                hourly_detailed['max'] = hourly_detailed['max'].fillna(0)
-                hourly_detailed['q25'] = hourly_detailed['q25'].fillna(0)
-                hourly_detailed['q75'] = hourly_detailed['q75'].fillna(0)
-                
-                # Calcular CV e amplitude
-                hourly_detailed['cv'] = np.where(
-                    hourly_detailed['mean'] > 0, 
-                    (hourly_detailed['std'] / hourly_detailed['mean'] * 100).round(1),
-                    0
-                )
-                hourly_detailed['range'] = hourly_detailed['max'] - hourly_detailed['min']
-                
-                # Renomear colunas para melhor visualização
-                hourly_detailed.columns = ['Hora', 'Registros', 'Média', 'Desvio Padrão', 'Mínimo', 'Máximo', 'Q1', 'Q3', 'CV (%)', 'Amplitude']
-                
-                st.dataframe(hourly_detailed, use_container_width=True)
-            
-                # Identificar horas com maior variabilidade
-                st.subheader("⚠️ Horas com Maior Variabilidade")
-                # Filtrar apenas horas com dados (registros > 0)
-                hours_with_data = hourly_detailed[hourly_detailed['Registros'] > 0]
-                high_variability = hours_with_data[hours_with_data['CV (%)'] > 30].sort_values('CV (%)', ascending=False)
-                if not high_variability.empty:
-                    st.dataframe(high_variability[['Hora', 'Média', 'CV (%)', 'Amplitude']], use_container_width=True)
-                else:
-                    st.success("✅ Nenhuma hora com variabilidade excessiva (CV > 30%)")
-                
-                # Horas com maior tráfego
-                st.subheader("📈 Horas com Maior Tráfego")
-                # Filtrar apenas horas com dados
-                hours_with_data = hourly_detailed[hourly_detailed['Registros'] > 0]
-                top_hours = hours_with_data.nlargest(3, 'Média')[['Hora', 'Média', 'Máximo', 'CV (%)']]
-                st.dataframe(top_hours, use_container_width=True)
-                
-                # Mostrar horas sem dados
-                hours_without_data = hourly_detailed[hourly_detailed['Registros'] == 0]
-                if not hours_without_data.empty:
-                    st.subheader("❌ Horas Sem Dados")
-                    st.warning(f"⚠️ {len(hours_without_data)} horas não possuem dados: {', '.join([f'{h}h' for h in hours_without_data['Hora']])}")
-                    st.dataframe(hours_without_data[['Hora']], use_container_width=True)
-                    
-            
-            with tab4:
-                st.subheader("📋 Relatório Completo")
-                
-                # Gerar relatório
-                report_text = generate_report_text(df, stats, anomalies)
-                st.text_area("Relatório", report_text, height=400)
-                
-                # Botão de download
-                st.download_button(
-                    label="📥 Baixar Relatório",
-                    data=report_text,
-                    file_name=f"anomaly_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain"
-                )
-                
-                # Estatísticas detalhadas
-                st.subheader("📊 Estatísticas Detalhadas")
-                stats_df = pd.DataFrame([
-                    {'Métrica': 'Total de Pageviews', 'Valor': f"{stats['total']:,}"},
-                    {'Métrica': 'Média', 'Valor': f"{stats['mean']:.1f}"},
-                    {'Métrica': 'Mediana', 'Valor': f"{stats['median']:.1f}"},
-                    {'Métrica': 'Desvio Padrão', 'Valor': f"{stats['std']:.1f}"},
-                    {'Métrica': 'Mínimo', 'Valor': f"{stats['min']:,}"},
-                    {'Métrica': 'Máximo', 'Valor': f"{stats['max']:,}"},
-                    {'Métrica': 'Q1 (25%)', 'Valor': f"{stats['q1']:.1f}"},
-                    {'Métrica': 'Q3 (75%)', 'Valor': f"{stats['q3']:.1f}"},
-                    {'Métrica': 'IQR', 'Valor': f"{stats['iqr']:.1f}"},
-                    {'Métrica': 'Coeficiente de Variação', 'Valor': f"{(stats['std']/stats['mean']*100):.1f}%"}
-                ])
-                st.dataframe(stats_df, use_container_width=True)
-            
+            # Botão de download
+            st.download_button(
+                label="📥 Baixar Relatório",
+                data=report_text,
+                file_name=f"anomaly_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain"
+            )
             with tab5:
                 st.subheader("🔄 Comparação entre Marcas")
                 
@@ -1029,8 +1041,20 @@ def main():
                     
                     # Gráfico de comparação
                     st.subheader("📈 Evolução Temporal Comparativa")
+                    
+                    # Opção para alternar entre visualização diária e horária
+                    col1, col2 = st.columns([3, 1])
+                    with col2:
+                        aggregation_mode = st.radio(
+                            "Granularidade:",
+                            options=['hourly', 'daily'],
+                            format_func=lambda x: "Por Hora" if x == 'hourly' else "Por Dia",
+                            horizontal=True,
+                            help="Escolha se deseja ver os dados por hora ou agregados por dia"
+                        )
+                    
                     st.plotly_chart(
-                        create_comparison_chart(selected_datasets, all_stats, selected_brands_for_comparison),
+                        create_comparison_chart(selected_datasets, all_stats, selected_brands_for_comparison, aggregation_mode),
                         use_container_width=True,
                         key="comparison_chart"
                     )
@@ -1040,8 +1064,8 @@ def main():
                     comparison_df = create_comparison_metrics(selected_datasets, all_stats)
                     
                     # Mostrar apenas colunas formatadas na tabela
-                    display_df = comparison_df[['Marca', 'Total Pageviews Formatado', 'Média por Hora Formatada', 'Mediana', 'Desvio Padrão', 'CV (%) Formatado', 'Máximo', 'Mínimo']]
-                    display_df.columns = ['Marca', 'Total Pageviews', 'Média por Hora', 'Mediana', 'Desvio Padrão', 'CV (%)', 'Máximo', 'Mínimo']
+                    display_df = comparison_df[['Marca', 'Total Pageviews Formatado', 'Média por Hora Formatada', 'Mediana', 'Desvio Padrão', 'Máximo', 'Mínimo']]
+                    display_df.columns = ['Marca', 'Total Pageviews', 'Média por Hora', 'Mediana', 'Desvio Padrão', 'Máximo', 'Mínimo']
                     st.dataframe(display_df, use_container_width=True)
                 
                     # Ranking de performance
@@ -1057,62 +1081,90 @@ def main():
                     
                     with col2:
                         st.markdown("**📊 Maior Média por Hora**")
-                        top_avg = comparison_df.nlargest(1, 'Média por Hora')[['Marca', 'Média por Hora Formatada']]
+                        # Usar a coluna numérica original para ordenação
+                        top_avg_idx = comparison_df['Média por Hora'].idxmax()
+                        top_avg = comparison_df.loc[[top_avg_idx], ['Marca', 'Média por Hora Formatada']]
                         top_avg.columns = ['Marca', 'Média por Hora']
                         st.dataframe(top_avg, use_container_width=True)
                     
                     with col3:
-                        st.markdown("**🎯 Menor Variabilidade (CV)**")
-                        top_stable = comparison_df.nsmallest(1, 'CV (%)')[['Marca', 'CV (%) Formatado']]
-                        top_stable.columns = ['Marca', 'CV (%)']
+                        st.markdown("**📊 Menor Desvio Padrão**")
+                        # Usar a coluna numérica original para ordenação
+                        top_stable_idx = comparison_df['Desvio Padrão'].astype(float).idxmin()
+                        top_stable = comparison_df.loc[[top_stable_idx], ['Marca', 'Desvio Padrão']]
                         st.dataframe(top_stable, use_container_width=True)
                 
                     # Análise de anomalias comparativa
-                    st.subheader("🚨 Anomalias por Marca")
+                    st.subheader("🚨 Análise de Anomalias por Marca")
                     
                     anomaly_comparison = []
+                    anomaly_details = {}
+                    
                     for brand_name, brand_df in selected_datasets.items():
                         brand_stats = all_stats[brand_name]
                         # Usar threshold de 50% da média histórica para comparação
-                        brand_anomalies = detect_anomalies(brand_df, brand_stats, 0.5, extreme_threshold, start_hour, end_hour)
+                        brand_anomalies = detect_anomalies(brand_df, brand_stats, 0.5, 0.8, 0, 23)
+                        
+                        # Calcular score de severidade
+                        anomaly_data_with_records = brand_anomalies.copy()
+                        anomaly_data_with_records['total_records'] = len(brand_df)
+                        severity_score = calculate_anomaly_severity_score(anomaly_data_with_records)
+                        status = get_anomaly_status(severity_score)
                         
                         total_anomalies = (len(brand_anomalies['zero_views']) + 
                                          len(brand_anomalies['very_low_views']) + 
                                          len(brand_anomalies['statistical_outliers']) + 
-                                         len(brand_anomalies['extreme_variations']))
+                                         len(brand_anomalies['extreme_variations']) + 
+                                         len(brand_anomalies['missing_hours']))
+                        
+                        critical_anomalies = len(brand_anomalies['zero_views']) + len(brand_anomalies['very_low_views'])
                         
                         anomaly_comparison.append({
                             'Marca': brand_name,
+                            'Status': status,
+                            'Score Severidade': f"{severity_score:.1f}",
                             'Total Anomalias': total_anomalies,
+                            'Críticas': critical_anomalies,
                             'Valores Zero': len(brand_anomalies['zero_views']),
                             'Valores Baixos': len(brand_anomalies['very_low_views']),
                             'Outliers': len(brand_anomalies['statistical_outliers']),
                             'Variações Extremas': len(brand_anomalies['extreme_variations']),
                             'Horas Faltando': len(brand_anomalies['missing_hours'])
                         })
+                        
+                        # Guardar detalhes para análise posterior
+                        anomaly_details[brand_name] = brand_anomalies
                     
-                    anomaly_df = pd.DataFrame(anomaly_comparison)
-                    st.dataframe(anomaly_df, use_container_width=True)
+                    # Ordenar por score de severidade (maior primeiro)
+                    anomaly_comparison.sort(key=lambda x: float(x['Score Severidade']), reverse=True)
                     
-                    # Resumo executivo
-                    st.subheader("📋 Resumo Executivo")
+                    # Gráfico visual das anomalias
+                    st.plotly_chart(
+                        create_anomaly_analysis_chart(anomaly_comparison),
+                        use_container_width=True,
+                        key="anomaly_analysis_chart"
+                    )
                     
-                    best_performer = comparison_df.loc[comparison_df['Total Pageviews'].idxmax(), 'Marca']
-                    most_stable = comparison_df.loc[comparison_df['CV (%)'].idxmin(), 'Marca']
-                    least_anomalies = anomaly_df.loc[anomaly_df['Total Anomalias'].idxmin(), 'Marca']
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.success(f"🏆 **Melhor Performance:** {best_performer}")
-                    
-                    with col2:
-                        st.info(f"🎯 **Mais Estável:** {most_stable}")
-                    
-                    with col3:
-                        st.warning(f"⚠️ **Menos Anomalias:** {least_anomalies}")
-                else:
-                    st.info("👆 Selecione pelo menos uma marca para comparar")
+                 
+        
+        # Upload de arquivos - no final da sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📁 Upload de Dados Adicionais")
+        st.sidebar.caption("Adicione mais arquivos CSV para análise")
+        
+        uploaded_files = st.sidebar.file_uploader(
+            "Selecione os arquivos CSV",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="📋 **Formato esperado:**\n• Date, Hour, Views\n• Date + hour (YYYYMMDDHH), Views\n\n💡 **Dica:** Faça upload de múltiplos arquivos para comparar marcas"
+        )
+        
+        # Se há arquivos enviados, também carregar eles (com cache)
+        if uploaded_files:
+            uploaded_datasets = load_multiple_datasets(uploaded_files)
+            datasets.update(uploaded_datasets)  # Combinar com CSVs da pasta
+            st.sidebar.success(f"✅ {len(uploaded_files)} arquivo(s) adicionado(s) com sucesso!")
+            st.rerun()  # Recarregar para mostrar as novas marcas
     else:
         # Mostrar mensagem quando não há dados válidos
         st.error("❌ Nenhum arquivo válido foi carregado. Verifique o formato dos dados.")
