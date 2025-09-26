@@ -835,7 +835,7 @@ def main():
             st.sidebar.error("⚠️ **Erro:** Data final deve ser maior que a data inicial!")
             st.sidebar.caption("Ajuste as datas para continuar a análise")
             # Usar dados originais se as datas estiverem incorretas
-            df = df
+            df_filtered_global = df
         else:
             # Aplicar filtro de data global
             start_datetime_global = pd.to_datetime(start_date_global)
@@ -847,7 +847,7 @@ def main():
             if len(df_filtered_global) == 0:
                 st.sidebar.warning("⚠️ **Atenção:** Nenhum dado encontrado para o período selecionado!")
                 st.sidebar.caption("Usando todos os dados disponíveis")
-                df = df
+                df_filtered_global = df
         
         # Configurações de detecção
         st.sidebar.subheader("🔍 Parâmetros de Detecção")
@@ -887,10 +887,10 @@ def main():
         
         
         # Calcular estatísticas
-        stats = calculate_statistics(df)
+        stats = calculate_statistics(df_filtered_global)
         
         # Calcular médias históricas por hora
-        hourly_means = calculate_hourly_means(df)
+        hourly_means = calculate_hourly_means(df_filtered_global)
         
         st.sidebar.caption("Valores baixos são detectados comparando com a média histórica de cada hora específica")
         
@@ -921,7 +921,7 @@ def main():
         
     
         # Detectar anomalias
-        anomalies = detect_anomalies(df, stats, threshold_percentage, extreme_threshold, start_hour, end_hour)
+        anomalies = detect_anomalies(df_filtered_global, stats, threshold_percentage, extreme_threshold, start_hour, end_hour)
         
         # Métricas principais
         st.subheader(f"📈 Métricas Principais - {selected_brand.upper()}")
@@ -1051,7 +1051,7 @@ def main():
         
         with tab2:
             st.plotly_chart(
-                create_time_series_chart(df, anomalies, stats),
+                create_time_series_chart(df_filtered_global, anomalies, stats),
                 key="time_series_chart",
                 config={
                     "displayModeBar": True,
@@ -1083,7 +1083,7 @@ def main():
             st.subheader("📋 Relatório Completo")
             
             # Gerar relatório
-            report_text = generate_report_text(df, stats, anomalies, selected_brand)
+            report_text = generate_report_text(df_filtered_global, stats, anomalies, selected_brand)
             st.text_area("-", report_text, height=400)
             
             # Botão de download
