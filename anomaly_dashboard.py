@@ -553,7 +553,18 @@ def create_comparison_chart(datasets, stats_dict, selected_brands=None, aggregat
     if selected_brands is None:
         selected_brands = list(datasets.keys())
     
-    for i, brand_name in enumerate(selected_brands):
+    # Ordenar marcas por total de views (maior para menor) para tooltip consistente
+    brand_totals = []
+    for brand_name in selected_brands:
+        if brand_name in datasets:
+            total_views = datasets[brand_name]['Views'].sum()
+            brand_totals.append((brand_name, total_views))
+    
+    # Ordenar por total de views (decrescente)
+    brand_totals.sort(key=lambda x: x[1], reverse=True)
+    ordered_brands = [brand[0] for brand in brand_totals]
+    
+    for i, brand_name in enumerate(ordered_brands):
         if brand_name in datasets:
             df = datasets[brand_name]
             color = colors[i % len(colors)]
