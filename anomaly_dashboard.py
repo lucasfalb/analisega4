@@ -1090,7 +1090,7 @@ def main():
             st.download_button(
                 label="📥 Baixar Relatório",
                 data=report_text,
-                file_name=f"anomaly_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                file_name=f"{selected_brand.lower()}-analise-pageview-ga4-{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain"
             )
             with tab5:
