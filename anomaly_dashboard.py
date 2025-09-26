@@ -318,10 +318,17 @@ def create_time_series_chart(df, anomalies, stats):
     # Outliers estatísticos (excluindo os que já são zero ou muito baixos)
     if not anomalies['statistical_outliers'].empty:
         # Filtrar para excluir valores que já são mostrados em outras categorias
-        outliers_filtered = anomalies['statistical_outliers'][
-            (anomalies['statistical_outliers']['Views'] > 0) &
-            (~anomalies['statistical_outliers']['DateTime'].isin(anomalies['very_low_views']['DateTime']))
-        ]
+        if not anomalies['very_low_views'].empty:
+            outliers_filtered = anomalies['statistical_outliers'][
+                (anomalies['statistical_outliers']['Views'] > 0) &
+                (~anomalies['statistical_outliers']['DateTime'].isin(anomalies['very_low_views']['DateTime']))
+            ]
+        else:
+            # Se very_low_views está vazio, não precisa filtrar por DateTime
+            outliers_filtered = anomalies['statistical_outliers'][
+                (anomalies['statistical_outliers']['Views'] > 0)
+            ]
+        
         if not outliers_filtered.empty:
             fig.add_trace(go.Scatter(
                 x=outliers_filtered['DateTime'],
