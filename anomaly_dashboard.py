@@ -988,7 +988,7 @@ def main():
             if not anomalies['very_low_views'].empty:
                 st.subheader("⚠️ Valores Muito Baixos")
                 st.dataframe(
-                    anomalies['very_low_views'][['Date', 'Hour', 'Views']].head(10).style.format({
+                    anomalies['very_low_views'][['Date', 'Hour', 'Views']].style.format({
                         'Date': lambda x: x.strftime('%d/%m/%Y'),
                         'Views': '{:,.0f}'
                     }),
