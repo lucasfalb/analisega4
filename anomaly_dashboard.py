@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime
 import os
 import glob
 
@@ -219,20 +218,70 @@ def detect_anomalies(df, stats, threshold_percentage=0.5, extreme_threshold=0.8,
     return anomalies
 
 def create_time_series_chart(df, anomalies, stats):
-    """Cria gráfico de série temporal com anomalias destacadas"""
+    """Cria gráfico de série temporal com anomalias destacadas e horas faltando preenchidas"""
     fig = go.Figure()
     
-    # Linha principal
-    fig.add_trace(go.Scatter(
-        x=df['DateTime'],
-        y=df['Views'],
-        mode='lines',
-        name='Pageviews',
-        line=dict(color='steelblue', width=1),
-        opacity=0.7
-    ))
+    # Criar série temporal completa com todas as horas
+    if len(df) > 0:
+        # Obter range de datas
+        min_date = df['Date'].min()
+        max_date = df['Date'].max()
+        
+        # Criar DataFrame completo com todas as horas
+        complete_dates = pd.date_range(start=min_date, end=max_date, freq='D')
+        complete_data = []
+        
+        for date in complete_dates:
+            for hour in range(24):
+                datetime_combo = pd.to_datetime(f"{date.strftime('%Y-%m-%d')} {hour:02d}:00:00")
+                
+                # Verificar se existe dados para esta data/hora
+                existing_data = df[(df['Date'] == date) & (df['Hour'] == hour)]
+                
+                if not existing_data.empty:
+                    # Usar dados existentes
+                    views = existing_data['Views'].iloc[0]
+                    is_missing = False
+                else:
+                    # Preencher com 0 para horas faltando
+                    views = 0
+                    is_missing = True
+                
+                complete_data.append({
+                    'DateTime': datetime_combo,
+                    'Views': views,
+                    'IsMissing': is_missing
+                })
+        
+        complete_df = pd.DataFrame(complete_data)
+        
+        # Linha principal (dados existentes)
+        existing_data = complete_df[~complete_df['IsMissing']]
+        if not existing_data.empty:
+            fig.add_trace(go.Scatter(
+                x=existing_data['DateTime'],
+                y=existing_data['Views'],
+                mode='lines+markers',
+                name='Pageviews',
+                line=dict(color='steelblue', width=1),
+                marker=dict(size=3),
+                opacity=0.7,
+                hovertemplate='<b>%{x|%d/%m/%Y %H}h</b><br>Views: %{y}<extra></extra>'
+            ))
+        
+        # Pontos para horas faltando (com 0)
+        missing_data = complete_df[complete_df['IsMissing']]
+        if not missing_data.empty:
+            fig.add_trace(go.Scatter(
+                x=missing_data['DateTime'],
+                y=missing_data['Views'],
+                mode='markers',
+                name='Horas Faltando*',
+                marker=dict(color='lightgray', size=4, symbol='circle'),
+                hovertemplate='<b>%{x|%d/%m/%Y %H}h</b><br>Views: %{y} (Faltando)<extra></extra>'
+            ))
     
-    # Destacar anomalias
+    # Destacar anomalias (evitando sobreposição)
     if not anomalies['zero_views'].empty:
         fig.add_trace(go.Scatter(
             x=anomalies['zero_views']['DateTime'],
@@ -240,28 +289,39 @@ def create_time_series_chart(df, anomalies, stats):
             mode='markers',
             name='Valores Zero',
             marker=dict(color='red', size=8, symbol='x'),
-            hovertemplate='<b>%{x}</b><br>Views: %{y}<extra></extra>'
+            hovertemplate='<b>%{x|%d/%m/%Y %H}h</b><br>Views: %{y} (Zero)<extra></extra>'
         ))
     
+    # Valores muito baixos (excluindo os que já são zero)
     if not anomalies['very_low_views'].empty:
-        fig.add_trace(go.Scatter(
-            x=anomalies['very_low_views']['DateTime'],
-            y=anomalies['very_low_views']['Views'],
-            mode='markers',
-            name='Valores Muito Baixos',
-            marker=dict(color='orange', size=6),
-            hovertemplate='<b>%{x}</b><br>Views: %{y}<extra></extra>'
-        ))
+        # Filtrar para excluir valores zero (que já são mostrados acima)
+        very_low_non_zero = anomalies['very_low_views'][anomalies['very_low_views']['Views'] > 0]
+        if not very_low_non_zero.empty:
+            fig.add_trace(go.Scatter(
+                x=very_low_non_zero['DateTime'],
+                y=very_low_non_zero['Views'],
+                mode='markers',
+                name='Valores Muito Baixos',
+                marker=dict(color='orange', size=6),
+                hovertemplate='<b>%{x|%d/%m/%Y %H}h</b><br>Views: %{y} (Muito Baixo)<extra></extra>'
+            ))
     
+    # Outliers estatísticos (excluindo os que já são zero ou muito baixos)
     if not anomalies['statistical_outliers'].empty:
-        fig.add_trace(go.Scatter(
-            x=anomalies['statistical_outliers']['DateTime'],
-            y=anomalies['statistical_outliers']['Views'],
-            mode='markers',
-            name='Outliers Estatísticos',
-            marker=dict(color='purple', size=6),
-            hovertemplate='<b>%{x}</b><br>Views: %{y}<extra></extra>'
-        ))
+        # Filtrar para excluir valores que já são mostrados em outras categorias
+        outliers_filtered = anomalies['statistical_outliers'][
+            (anomalies['statistical_outliers']['Views'] > 0) &
+            (~anomalies['statistical_outliers']['DateTime'].isin(anomalies['very_low_views']['DateTime']))
+        ]
+        if not outliers_filtered.empty:
+            fig.add_trace(go.Scatter(
+                x=outliers_filtered['DateTime'],
+                y=outliers_filtered['Views'],
+                mode='markers',
+                name='Outliers Estatísticos',
+                marker=dict(color='purple', size=6),
+                hovertemplate='<b>%{x|%d/%m/%Y %H}h</b><br>Views: %{y} (Outlier)<extra></extra>'
+            ))
     
     # Linha da média
     fig.add_hline(
@@ -723,21 +783,37 @@ def main():
         
         col1, col2 = st.sidebar.columns(2)
         with col1:
+            # Garantir que o valor padrão esteja dentro do range válido
+            min_date = df['Date'].min().date()
+            max_date = df['Date'].max().date()
+            default_start = st.session_state.get('global_start_date', min_date)
+            
+            # Se o valor salvo estiver fora do range, usar o min_date
+            if default_start < min_date or default_start > max_date:
+                default_start = min_date
+            
             start_date_global = st.date_input(
                 "Data Inicial",
-                value=st.session_state.get('global_start_date', df['Date'].min().date()),
-                min_value=df['Date'].min().date(),
-                max_value=df['Date'].max().date(),
+                value=default_start,
+                min_value=min_date,
+                max_value=max_date,
                 help="Data inicial para análise geral",
                 key="global_start_date"
             )
         
         with col2:
+            # Garantir que o valor padrão esteja dentro do range válido
+            default_end = st.session_state.get('global_end_date', max_date)
+            
+            # Se o valor salvo estiver fora do range, usar o max_date
+            if default_end < min_date or default_end > max_date:
+                default_end = max_date
+            
             end_date_global = st.date_input(
                 "Data Final",
-                value=st.session_state.get('global_end_date', df['Date'].max().date()),
-                min_value=df['Date'].min().date(),
-                max_value=df['Date'].max().date(),
+                value=default_end,
+                min_value=min_date,
+                max_value=max_date,
                 help="Data final para análise geral",
                 key="global_end_date"
             )
@@ -836,7 +912,7 @@ def main():
         anomalies = detect_anomalies(df, stats, threshold_percentage, extreme_threshold, start_hour, end_hour)
         
         # Métricas principais
-        st.subheader("📈 Métricas Principais")
+        st.subheader(f"📈 Métricas Principais - {selected_brand.upper()}")
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -874,13 +950,6 @@ def main():
                 delta=None
             )
         
-        # Alertas
-        if critical_anomalies > 0:
-            st.error(f"⚠️ **ATENÇÃO**: {critical_anomalies} anomalias críticas detectadas!")
-        elif total_anomalies > 20:
-            st.warning(f"⚠️ {total_anomalies} anomalias detectadas. Verifique os dados.")
-        else:
-            st.success("✅ Nenhuma instabilidade crítica detectada.")
         
         # Tabs para diferentes visualizações
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -1017,7 +1086,7 @@ def main():
                 
                 # Seleção de marcas para comparação
                 st.subheader("🎯 Seleção de Marcas")
-                available_brands = list(datasets.keys())
+                available_brands = [brand.upper() for brand in datasets.keys()]
                 col1 = st.columns(1)[0]
                 with col1:
                     selected_brands_for_comparison = st.multiselect(
@@ -1030,11 +1099,14 @@ def main():
                 if selected_brands_for_comparison:
                     # Aplicar filtro global também na comparação
                     selected_datasets = {}
-                    for brand in selected_brands_for_comparison:
-                        brand_df = datasets[brand]
-                        # Aplicar o mesmo filtro de data global
-                        brand_df_filtered = brand_df[(brand_df['Date'] >= start_datetime_global) & (brand_df['Date'] < end_datetime_global)]
-                        selected_datasets[brand] = brand_df_filtered
+                    for brand_upper in selected_brands_for_comparison:
+                        # Encontrar a chave original no dicionário (case-insensitive)
+                        original_brand = next((k for k in datasets.keys() if k.upper() == brand_upper), None)
+                        if original_brand:
+                            brand_df = datasets[original_brand]
+                            # Aplicar o mesmo filtro de data global
+                            brand_df_filtered = brand_df[(brand_df['Date'] >= start_datetime_global) & (brand_df['Date'] < end_datetime_global)]
+                            selected_datasets[brand_upper] = brand_df_filtered
                     
                     all_stats = {}
                     for brand_name, brand_df in selected_datasets.items():
@@ -1079,24 +1151,35 @@ def main():
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        st.markdown("**📈 Maior Volume Total**")
-                        top_total = comparison_df.nlargest(1, 'Total Pageviews')[['Marca', 'Total Pageviews Formatado']]
+                        st.markdown("**📈 Top 3 - Maior Volume Total**")
+                        # Garantir que sempre mostre 3 entradas
+                        top_total = comparison_df.nlargest(min(3, len(comparison_df)), 'Total Pageviews')[['Marca', 'Total Pageviews Formatado']]
                         top_total.columns = ['Marca', 'Total Pageviews']
+                        # Adicionar ranking
+                        top_total['Ranking'] = range(1, len(top_total) + 1)
+                        top_total = top_total[['Ranking', 'Marca', 'Total Pageviews']]
                         st.dataframe(top_total, width="stretch")
                     
                     with col2:
-                        st.markdown("**📊 Maior Média por Hora**")
-                        # Usar a coluna numérica original para ordenação
-                        top_avg_idx = comparison_df['Média por Hora'].idxmax()
-                        top_avg = comparison_df.loc[[top_avg_idx], ['Marca', 'Média por Hora Formatada']]
+                        st.markdown("**📊 Top 3 - Maior Média por Hora**")
+                        # Garantir que sempre mostre 3 entradas
+                        top_avg = comparison_df.nlargest(min(3, len(comparison_df)), 'Média por Hora')[['Marca', 'Média por Hora Formatada']]
                         top_avg.columns = ['Marca', 'Média por Hora']
+                        # Adicionar ranking
+                        top_avg['Ranking'] = range(1, len(top_avg) + 1)
+                        top_avg = top_avg[['Ranking', 'Marca', 'Média por Hora']]
                         st.dataframe(top_avg, width="stretch")
                     
                     with col3:
-                        st.markdown("**📊 Menor Desvio Padrão**")
-                        # Usar a coluna numérica original para ordenação
-                        top_stable_idx = comparison_df['Desvio Padrão'].astype(float).idxmin()
-                        top_stable = comparison_df.loc[[top_stable_idx], ['Marca', 'Desvio Padrão']]
+                        st.markdown("**📊 Top 3 - Menor Desvio Padrão**")
+                        # Converter para float e usar a coluna numérica original para ordenação
+                        comparison_df_temp = comparison_df.copy()
+                        comparison_df_temp['Desvio Padrão Num'] = comparison_df_temp['Desvio Padrão'].astype(float)
+                        # Garantir que sempre mostre 3 entradas
+                        top_stable = comparison_df_temp.nsmallest(min(3, len(comparison_df_temp)), 'Desvio Padrão Num')[['Marca', 'Desvio Padrão']]
+                        # Adicionar ranking
+                        top_stable['Ranking'] = range(1, len(top_stable) + 1)
+                        top_stable = top_stable[['Ranking', 'Marca', 'Desvio Padrão']]
                         st.dataframe(top_stable, width="stretch")
                 
                     # Análise de anomalias comparativa
