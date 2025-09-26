@@ -413,11 +413,12 @@ def create_anomaly_summary_chart(anomalies):
     
     return fig
 
-def generate_report_text(df, stats, anomalies):
+def generate_report_text(df, stats, anomalies, brand_name="N/A"):
     """Gera texto do relatório"""
     report_lines = []
     report_lines.append("RELATÓRIO DE ANÁLISE DE ANOMALIAS - PAGEVIEWS")
     report_lines.append("=" * 60)
+    report_lines.append(f"Marca: {brand_name.upper()}")
     report_lines.append(f"Período: {df['Date'].min().strftime('%d/%m/%Y')} a {df['Date'].max().strftime('%d/%m/%Y')}")
     report_lines.append(f"Total de registros: {len(df):,}")
     report_lines.append("")
@@ -1071,7 +1072,7 @@ def main():
             st.subheader("📋 Relatório Completo")
             
             # Gerar relatório
-            report_text = generate_report_text(df, stats, anomalies)
+            report_text = generate_report_text(df, stats, anomalies, selected_brand)
             st.text_area("-", report_text, height=400)
             
             # Botão de download
