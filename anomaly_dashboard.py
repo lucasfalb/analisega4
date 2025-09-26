@@ -141,7 +141,16 @@ def calculate_statistics(df):
 
 def calculate_hourly_means(df):
     """Calcula a média histórica para cada hora do dia"""
+    if len(df) == 0:
+        return {}
+    
     hourly_means = df.groupby('Hour')['Views'].mean().to_dict()
+    
+    # Garantir que todas as horas de 0-23 estejam presentes
+    for hour in range(24):
+        if hour not in hourly_means:
+            hourly_means[hour] = 0
+    
     return hourly_means
 
 def detect_low_values_by_hour(df, hourly_means, threshold_percentage=0.5):
@@ -345,44 +354,122 @@ def create_time_series_chart(df, anomalies, stats):
 
 def create_hourly_analysis_chart(df):
     """Cria análise por hora do dia"""
-    hourly_stats = df.groupby('Hour')['Views'].agg(['mean', 'std', 'count', 'min', 'max']).reset_index()
+    # Verificar se há dados
+    if len(df) == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title='Média de Pageviews por Hora do Dia',
+            xaxis_title='Hora do Dia',
+            yaxis_title='Pageviews',
+            height=500,
+            annotations=[dict(text="Nenhum dado disponível", x=0.5, y=0.5, showarrow=False)]
+        )
+        return fig
     
-    fig = go.Figure()
+    # Verificar se é apenas 1 dia ou múltiplos dias
+    unique_dates = df['Date'].nunique()
     
-    # Gráfico de barras com barras de erro
-    fig.add_trace(go.Bar(
-        x=hourly_stats['Hour'],
-        y=hourly_stats['mean'],
-        name='Média por Hora',
-        marker_color='steelblue',
-        error_y=dict(
-            type='data', 
-            array=hourly_stats['std'], 
-            visible=True,
-            color='rgba(0,0,0,0.3)'
-        ),
-        hovertemplate='<b>Hora:</b> %{x}h<br><b>Média:</b> %{y:.0f}<br><b>Desvio:</b> ±%{error_y.array:.0f}<extra></extra>'
-    ))
-    
-    # Adicionar linha de tendência
-    fig.add_trace(go.Scatter(
-        x=hourly_stats['Hour'],
-        y=hourly_stats['mean'],
-        mode='lines+markers',
-        name='Tendência',
-        line=dict(color='red', width=2),
-        marker=dict(size=6),
-        hovertemplate='<b>Hora:</b> %{x}h<br><b>Média:</b> %{y:.0f}<extra></extra>'
-    ))
-    
-    fig.update_layout(
-        title='Média de Pageviews por Hora do Dia',
-        xaxis_title='Hora do Dia',
-        yaxis_title='Pageviews',
-        height=500,
-        hovermode='x unified',
-        xaxis=dict(tickmode='linear', tick0=0, dtick=1, range=[-0.5, 23.5])
-    )
+    if unique_dates == 1:
+        # Para 1 dia: mostrar pageviews reais por hora
+        fig = go.Figure()
+        
+        # Garantir que todas as horas de 0-23 estejam presentes
+        all_hours = pd.DataFrame({'Hour': range(24)})
+        hourly_data = df.groupby('Hour')['Views'].first().reset_index()
+        hourly_data = all_hours.merge(hourly_data, on='Hour', how='left')
+        hourly_data['Views'] = hourly_data['Views'].fillna(0)
+        
+        fig.add_trace(go.Bar(
+            x=hourly_data['Hour'],
+            y=hourly_data['Views'],
+            name='Pageviews por Hora',
+            marker_color='steelblue',
+            hovertemplate='<b>Hora:</b> %{x}h<br><b>Pageviews:</b> %{y:,}<extra></extra>'
+        ))
+        
+        # Adicionar linha de tendência
+        fig.add_trace(go.Scatter(
+            x=hourly_data['Hour'],
+            y=hourly_data['Views'],
+            mode='lines+markers',
+            name='Tendência',
+            line=dict(color='red', width=2),
+            marker=dict(size=6),
+            hovertemplate='<b>Hora:</b> %{x}h<br><b>Pageviews:</b> %{y:,}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title='Pageviews por Hora do Dia',
+            xaxis_title='Hora do Dia',
+            yaxis_title='Pageviews',
+            height=500,
+            hovermode='x unified',
+            xaxis=dict(tickmode='linear', tick0=0, dtick=1, range=[-0.5, 23.5])
+        )
+        
+    else:
+        # Para múltiplos dias: mostrar média por hora
+        hourly_stats = df.groupby('Hour')['Views'].agg(['mean', 'std', 'count', 'min', 'max']).reset_index()
+        
+        # Corrigir problemas com períodos curtos
+        hourly_stats['std'] = hourly_stats['std'].fillna(0)
+        
+        # Garantir que todas as horas de 0-23 estejam presentes
+        all_hours = pd.DataFrame({'Hour': range(24)})
+        hourly_stats = all_hours.merge(hourly_stats, on='Hour', how='left')
+        hourly_stats['mean'] = hourly_stats['mean'].fillna(0)
+        hourly_stats['std'] = hourly_stats['std'].fillna(0)
+        hourly_stats['count'] = hourly_stats['count'].fillna(0)
+        
+        fig = go.Figure()
+        
+        # Determinar se deve mostrar barras de erro (apenas se há múltiplas observações)
+        show_error_bars = (hourly_stats['count'] > 1).any()
+        
+        if show_error_bars:
+            fig.add_trace(go.Bar(
+                x=hourly_stats['Hour'],
+                y=hourly_stats['mean'],
+                name='Média por Hora',
+                marker_color='steelblue',
+                error_y=dict(
+                    type='data', 
+                    array=hourly_stats['std'], 
+                    visible=True,
+                    color='rgba(0,0,0,0.3)'
+                ),
+                hovertemplate='<b>Hora:</b> %{x}h<br><b>Média:</b> %{y:.0f}<br><b>Desvio:</b> ±%{error_y.array:.0f}<br><b>Observações:</b> %{customdata}<extra></extra>',
+                customdata=hourly_stats['count']
+            ))
+        else:
+            fig.add_trace(go.Bar(
+                x=hourly_stats['Hour'],
+                y=hourly_stats['mean'],
+                name='Média por Hora',
+                marker_color='steelblue',
+                hovertemplate='<b>Hora:</b> %{x}h<br><b>Média:</b> %{y:.0f}<br><b>Observações:</b> %{customdata}<extra></extra>',
+                customdata=hourly_stats['count']
+            ))
+        
+        # Adicionar linha de tendência
+        fig.add_trace(go.Scatter(
+            x=hourly_stats['Hour'],
+            y=hourly_stats['mean'],
+            mode='lines+markers',
+            name='Tendência',
+            line=dict(color='red', width=2),
+            marker=dict(size=6),
+            hovertemplate='<b>Hora:</b> %{x}h<br><b>Média:</b> %{y:.0f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title='Média de Pageviews por Hora do Dia',
+            xaxis_title='Hora do Dia',
+            yaxis_title='Pageviews',
+            height=500,
+            hovermode='x unified',
+            xaxis=dict(tickmode='linear', tick0=0, dtick=1, range=[-0.5, 23.5])
+        )
     
     return fig
 
@@ -1061,10 +1148,10 @@ def main():
             )
         
         with tab3:
-            # Gráfico geral por hora (sem filtro)
-            st.subheader("📊 Análise Geral por Hora (Todo o Período)")
+            # Gráfico por hora do período selecionado
+            st.subheader(f"📊 Análise por Hora - Período: {start_date_global} a {end_date_global}")
             st.plotly_chart(
-                create_hourly_analysis_chart(df),
+                create_hourly_analysis_chart(df_filtered_global),
                 key="hourly_analysis_general",
                 config={
                     "displayModeBar": True,
